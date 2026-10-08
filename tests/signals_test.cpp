@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <set>
 
 #include "vnsl/j1939/signals.hpp"
@@ -194,4 +195,70 @@ TEST(TimeDate, RejectsNullErrorAndOutOfRange) {
     EXPECT_FALSE(decode_time_date(minute60));
     const std::array<std::uint8_t, 5> short_frame{};
     EXPECT_FALSE(decode_time_date(short_frame));
+}
+
+TEST(Encode, InsertIsTheInverseOfExtract) {
+    std::array<std::uint8_t, 8> d{};
+    d.fill(0xFF);
+    ASSERT_TRUE(insert_bits(d, 4, 8, 0x4E));
+    EXPECT_EQ(extract_bits(d, 4, 8), 0x4Eu);
+    EXPECT_EQ(d[0] & 0x0F, 0x0F);  // neighbouring bits untouched
+    ASSERT_TRUE(insert_bits(d, 32, 32, 0xDEADBEEF));
+    EXPECT_EQ(extract_bits(d, 32, 32), 0xDEADBEEFu);
+    EXPECT_FALSE(insert_bits(d, 60, 8, 1));  // runs past the end: nothing written
+    EXPECT_EQ(extract_bits(d, 32, 32), 0xDEADBEEFu);
+}
+
+TEST(Encode, EverySpnRoundTripsThroughTheDecoder) {
+    // For every parameter in the table: encode a mid-range value, decode it back.
+    for (const auto& def : spn_table()) {
+        const std::uint32_t max = def.length >= 8 && !def.discrete() ? (0xFAU << (def.length - 8)) : 1U;
+        const std::uint32_t raw = max / 2;
+        const double value = def.discrete() ? static_cast<double>(raw) : raw * def.scale + def.offset;
+        const SignalInput in{def.spn, value};
+        const auto payload = encode_signals(def.pgn, std::span<const SignalInput>(&in, 1));
+        bool found = false;
+        for (const auto& v : decode_signals(def.pgn, payload)) {
+            if (v.def->spn == def.spn) {
+                found = true;
+                EXPECT_EQ(v.status, Status::Valid) << def.spn;
+                EXPECT_EQ(v.raw, raw) << def.spn;
+            } else {
+                EXPECT_NE(v.status, Status::Valid) << def.spn << " leaked into " << v.def->spn;  // others stay n/a
+            }
+        }
+        EXPECT_TRUE(found) << def.spn;
+    }
+}
+
+TEST(Encode, ClampsInsteadOfProducingReservedCodes) {
+    const SignalInput too_fast{190, 1e9};  // engine speed far above 8031.875 rpm
+    const SignalInput negative{84, -5};    // vehicle speed below zero
+    const auto a = encode_signals(61444, std::span<const SignalInput>(&too_fast, 1));
+    const auto b = encode_signals(65265, std::span<const SignalInput>(&negative, 1));
+    EXPECT_EQ(extract_bits(a, 24, 16), 0xFAFFu);  // largest valid value, not 0xFExx/0xFFxx
+    EXPECT_EQ(extract_bits(b, 8, 16), 0u);
+    const SignalInput nan{110, std::nan("")};
+    const auto c = encode_signals(65262, std::span<const SignalInput>(&nan, 1));
+    EXPECT_EQ(classify(c[0], 8, false), Status::Valid);
+}
+
+TEST(Encode, Dm1RoundTrips) {
+    Dm1 dm;
+    dm.malfunction_lamp = 1;
+    dm.amber_warning_lamp = 1;
+    dm.red_stop_lamp = 0;
+    dm.protect_lamp = 0;
+    EXPECT_TRUE(decode_dm1(encode_dm1(dm))->dtcs.empty());
+    EXPECT_EQ(encode_dm1(dm).size(), 8u);
+    dm.dtcs = {{100, 1, 3, false}};
+    EXPECT_EQ(encode_dm1(dm).size(), 8u);
+    dm.dtcs.push_back({0x7FFFE, 31, 126, true});
+    const auto bytes = encode_dm1(dm);
+    EXPECT_EQ(bytes.size(), 10u);  // two codes: needs the transport protocol
+    const auto back = decode_dm1(bytes);
+    ASSERT_TRUE(back);
+    EXPECT_EQ(back->dtcs, dm.dtcs);
+    EXPECT_EQ(back->malfunction_lamp, 1);
+    EXPECT_EQ(back->amber_warning_lamp, 1);
 }

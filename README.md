@@ -9,9 +9,11 @@ vehicle bus, detect those attacks, authenticate messages and harden an
 embedded-Linux gateway.
 
 No hardware is needed. Input comes from real truck traffic (a public research
-dataset) and, from M2, from a virtual CAN bus on Linux.
+dataset) and from a simulated truck that also runs live on a Linux virtual CAN
+bus.
 
-**Status:** M1 (J1939 decoder) done. See the [roadmap](docs/roadmap.md).
+**Status:** M1 (J1939 decoder) and M2 (virtual vehicle bus) done. See the
+[roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -59,6 +61,61 @@ into one of the logger's two pauses, so the transfer was never complete.
 
 Details: [docs/j1939-decoder.md](docs/j1939-decoder.md).
 
+## A virtual truck on a virtual bus (M2)
+
+- **Bus model:** a discrete-event simulation of one 250 kbit/s CAN bus, the
+  real truck's speed. Each frame occupies the bus for its exact bit count: the
+  real bit sequence is built, its CRC-15 computed, and stuff bits counted the
+  way a CAN controller inserts them. When several nodes are ready, the lowest
+  identifier wins arbitration and the others wait. Bus load, contested
+  arbitrations and waiting times are measured, not estimated.
+- **Six simulated nodes:** engine, transmission, brakes, instrument cluster,
+  tachograph and a service tool. Each claims its address at power-up
+  (J1939-81), defends it, and gives way if a node with a higher-priority NAME
+  claims the same one. They answer requests (or refuse them with a negative
+  acknowledgement) and send long messages by BAM, or by RTS/CTS as sender and
+  receiver. An optional second service tool powers up at 10 s with the same
+  address and has to move.
+- **A vehicle model behind the numbers:** a 20-tonne truck on a repeating
+  drive cycle. It pulls away through 12 gears, cruises at 60–85 km/h, brakes
+  to a stop and parks. Engine speed, shaft speeds, gear ratio, two independent
+  speed sensors, fuel, distance and temperatures all come from one physical
+  state. The ABS unit deliberately reads 0.3 % high (a worn-tyre radius
+  error), the way a real truck's wheel speed differs from its calibrated
+  tachograph.
+- **Deterministic:** the simulation never reads the wall clock, so a seed
+  gives the same log byte for byte (checked in CI; GCC and Clang builds agree).
+  macOS's standard library draws different random numbers, so a run there is
+  equally repeatable but not identical to Linux.
+- **Real SocketCAN:** `vn-sim --iface vcan0` runs the same simulation against
+  the wall clock on a Linux CAN interface. Frames from outside (another
+  program, a real device, an attacker in M3) are fed into the simulated bus,
+  and the ECUs answer them. `vn-record` and `vn-replay` record and replay
+  interfaces with kernel timestamps.
+
+```
+$ vn-sim --duration 600 --seed 1 --conflict --summary --out sim.log
+simulated 600.0 s at 250 kbit/s: 146267 frames, bus load 13.7 %
+arbitration: 15756 contested starts, 15943 frames waited; longest wait 6840 us; most queued 7
+node            addr   frames claims   BAM   RTS  rxRTS  NACK
+engine          0x00    54451      2   510    12      0     0
+transmission    0x03    65976      2     0     0      0     1
+...
+service-tool-2  0x80        5      2     0     0      1     0
+```
+
+The second service tool asked for 0xF9, lost to the first tool's
+higher-priority NAME and moved to 0x80.
+
+The simulated bus is quieter than the real one: 13.7 % load and 244 frames a
+second, against 47 % and 811 on the Turku truck, computed with the same bit
+timing. The real truck's gateway also republishes dozens of proprietary
+groups, which the simulator does not invent. So M3 will measure detection on
+real traffic too: results on the quieter simulated bus alone would be too
+optimistic.
+
+Details: [docs/simulator.md](docs/simulator.md).
+
 ## How it's checked
 
 Unit tests are not enough for a decoder: they only check the decoder against
@@ -93,9 +150,46 @@ values "not available"), so engine and vehicle-speed scaling are covered only
 by unit tests for now. Comparing the wheel-speed and tachograph-speed sensors
 against each other waits for a capture of the truck driving (M3).
 
-Also: three libFuzzer targets (log parsers, transport reassembler, signal
-decoders) run under ASan and UBSan on every push, and clang-tidy runs with
-warnings as errors.
+M2 adds four more checks, also in CI:
+
+4. **Connection-mode transfers against can-j1939.** Ten simulated minutes
+   (146,267 frames) go through the same cross-check: 145,159 messages
+   identical, including all 522 reassembled transfers (510 broadcast, 12
+   RTS/CTS). This closes M1's gap, since the real capture has no RTS/CTS
+   traffic ([evidence](docs/evidence/m2-crosscheck-can-j1939.md)). Running it
+   found a bug in the cross-check itself: the step meant to make can-j1939
+   listen to every destination had never taken effect. M1's result is
+   unaffected, because every addressed frame in the real capture goes to the
+   global address.
+5. **Physics.** Seven pairs of values that different ECUs send in different
+   groups must agree. Examples: wheel speed against tachograph speed (the
+   ABS unit's designed radius error is 0.294 %; the decoded traffic shows
+   0.294 %), engine speed against
+   input-shaft speed (median difference 0.00 rpm with the clutch closed), and
+   the odometer against integrated speed. Tolerances were set before the
+   first run ([evidence](docs/evidence/m2-physics.md)).
+6. **Bit timing against a second implementation.** CRC-15 and stuff-bit
+   counts for 1,000 frames match a separately written Python implementation,
+   and the CRC matches the published CRC-15/CAN check value.
+7. **Live on Linux.** A CI job loads the kernel's `vcan` module and runs the
+   simulation live while can-utils' own `candump` and `vn-record` record it.
+   All three logs must hold exactly the offline simulation's frames. A
+   request injected with `cansend` must get the engine's answer, and a 4x
+   replay must reproduce the log.
+
+Planted bugs in the simulator and its sender (packet numbering off by one,
+the wrong shaft speed, a wrong scale) are each caught
+([evidence](docs/evidence/m2-planted-bugs.md)).
+
+The physics checks share one limit, stated in the script itself: the
+simulator and the decoder use the same parameter table, so a parameter at the
+wrong position would be encoded and decoded the same wrong way. Positions are
+checked against real traffic, not against the simulation.
+
+Also: four libFuzzer targets (log parsers, transport reassembler, signal
+decoders, and the simulated truck's active J1939 stack fed hostile frames) run
+under ASan and UBSan on every push, and clang-tidy runs with warnings as
+errors.
 
 ## Build
 
@@ -107,6 +201,18 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build
 ./build/vn-decode --summary testdata/turku-truck-2020-11-26-slice.csv
+./build/vn-sim --duration 600 --seed 1 --conflict --summary --out sim.log
+```
+
+Live on a Linux virtual CAN bus (needs root for the first three lines):
+
+```
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+./build/vn-sim --iface vcan0 --duration 60 --out live.log &
+candump -L vcan0                      # or: ./build/vn-record vcan0
+cansend vcan0 18EAFFF1#ECFE00         # ask everyone for the vehicle ID; the engine answers
 ```
 
 Options: `-DVNSL_SANITIZE=ON` (ASan + UBSan), `-DVNSL_BUILD_FUZZERS=ON`
@@ -115,14 +221,15 @@ Options: `-DVNSL_SANITIZE=ON` (ASan + UBSan), `-DVNSL_BUILD_FUZZERS=ON`
 ## Layout
 
 ```
-include/vnsl/can/      CAN frame, candump and Turku CSV parsers
-include/vnsl/j1939/    identifier, transport protocol, signals (SPN table, DM1, NAME, Time/Date)
+include/vnsl/can/      CAN frame, log parsers, bit timing (CRC-15, stuffing), SocketCAN (Linux)
+include/vnsl/j1939/    identifier, transport protocol, signals (SPN table, DM1, NAME, Time/Date, encoding)
+include/vnsl/sim/      bus simulator, active J1939 node, vehicle model, the simulated truck
 src/                   implementation
-apps/vn-decode/        command-line decoder
+apps/                  vn-decode, vn-sim, vn-record, vn-replay
 tests/                 unit tests and real-capture tests
 fuzz/                  libFuzzer targets
 tools/                 cross-check and consistency scripts, fuzz seeds
-testdata/              15,766 real frames from a heavy truck (CC BY 4.0)
+testdata/              15,766 real frames from a heavy truck (CC BY 4.0); CAN bit-timing vectors
 docs/                  design notes, ADRs, evidence from real runs
 ```
 

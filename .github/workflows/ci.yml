@@ -60,8 +60,99 @@ jobs:
           ./build/vn-decode --candump testdata/turku-truck-2020-11-26-slice.csv > capture.log
           ./build/vn-decode --format candump capture.log | cmp - ours.jsonl
 
+  simulation:
+    name: Simulated truck (determinism, can-j1939 incl. RTS/CTS, physics)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-sim vn-decode
+      - name: Ten simulated minutes, twice with the same seed (must be identical)
+        run: |
+          set -o pipefail
+          ./build/vn-sim --duration 600 --seed 1 --conflict --summary --out sim.log 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          ./build/vn-sim --duration 600 --seed 1 --conflict --out sim2.log
+          cmp sim.log sim2.log
+          ./build/vn-decode --summary sim.log | tail -3 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Compare every message, connection-mode transfers included, with can-j1939
+        run: |
+          set -o pipefail
+          pip install can-j1939==2.0.12 python-can==4.6.1
+          ./build/vn-decode sim.log > sim.jsonl
+          python3 tools/crosscheck_j1939.py sim.log sim.jsonl | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check the simulated traffic is physically consistent
+        run: |
+          set -o pipefail
+          python3 tools/check_sim_physics.py sim.jsonl --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+
+  vcan:
+    name: Live on a Linux virtual CAN bus (vcan), checked with can-utils
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install can-utils and the vcan kernel module
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build can-utils
+          # vcan ships in linux-modules-extra on some runner kernels; install it only if needed.
+          sudo modprobe vcan || { sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe vcan; }
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set up vcan0
+          ip -details link show vcan0
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-sim vn-record vn-replay vn-decode
+      - name: Live run carries exactly the frames of the offline simulation
+        run: |
+          set -o pipefail
+          ./build/vn-sim --duration 20 --seed 7 --out offline.log
+          candump -L vcan0 > candump.log &
+          CD=$!
+          ./build/vn-record vcan0 > record.log &
+          VR=$!
+          sleep 1
+          ./build/vn-sim --iface vcan0 --duration 20 --seed 7 --out live.log --summary
+          sleep 1
+          kill -TERM $CD $VR
+          wait $CD $VR || true
+          python3 tools/compare_logs.py offline.log live.log candump.log record.log | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: A request injected from outside is answered by the simulated engine
+        run: |
+          set -o pipefail
+          candump -L vcan0 > candump2.log &
+          CD=$!
+          sleep 1
+          ./build/vn-sim --iface vcan0 --duration 12 --seed 7 --out live2.log &
+          SIM=$!
+          sleep 6
+          cansend vcan0 18EAFFF1#ECFE00   # global request (from 0xF1) for the vehicle ID, PGN 65260
+          wait $SIM
+          sleep 1
+          kill -TERM $CD
+          wait $CD || true
+          # The engine must answer with a broadcast (BAM) of the 18-byte vehicle ID.
+          python3 tools/compare_logs.py live2.log candump2.log --external 18EAFFF1#ECFE00 \
+            --require-frame 1CECFF00#20120003FFECFE00 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Replaying the log at 4x reproduces it
+        run: |
+          set -o pipefail
+          candump -L vcan0 > replay.log &
+          CD=$!
+          sleep 1
+          ./build/vn-replay live.log vcan0 --speed 4
+          sleep 1
+          kill -TERM $CD
+          wait $CD || true
+          python3 tools/compare_logs.py live.log replay.log --speed 4 | tee -a "$GITHUB_STEP_SUMMARY"
+
   fuzz:
-    name: Fuzz (libFuzzer, 3 targets, 60 s each)
+    name: Fuzz (libFuzzer, 4 targets, 60 s each)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -72,7 +163,7 @@ jobs:
           CXX: clang++
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVNSL_BUILD_TESTS=OFF -DVNSL_BUILD_FUZZERS=ON
-          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals
+          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck
       - name: Fuzz the candump and CSV line parsers, seeded with real rows
         run: |
           mkdir -p corpus-log && head -n 300 testdata/turku-truck-2020-11-26-slice.csv | split -l 1 - corpus-log/csv-
@@ -88,6 +179,11 @@ jobs:
           mkdir -p corpus-sig
           printf '\xd2\x1c\x09\x0b\x66\x23\xff\xff' > corpus-sig/td
           ./build/fuzz_signals -max_total_time=60 -max_len=2048 corpus-sig
+      - name: Fuzz the simulated truck's active J1939 stack with injected frames
+        run: |
+          mkdir -p corpus-truck
+          python3 tools/make_truck_seeds.py corpus-truck
+          ./build/fuzz_truck -max_total_time=60 -max_len=2200 -rss_limit_mb=4096 corpus-truck
 
   lint:
     name: clang-tidy

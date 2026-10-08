@@ -95,7 +95,9 @@ All of these run in CI on every push.
 ### Limits of this verification
 
 - The capture has no connection-mode (RTS/CTS) transfers, only broadcasts.
-  RTS/CTS is covered by unit tests, not by real traffic or the cross-check.
+  RTS/CTS is covered by unit tests, and since M2 by the cross-check on
+  simulated traffic (12 RTS/CTS transfers identical to can-j1939's; see
+  [simulator.md](simulator.md)), but not by real traffic.
 - The truck is parked. Engine speed, torque, vehicle speed, fuel rate and
   temperatures are "not available" or constant, so their positions and scales
   are checked by unit tests only. The planned physical check (the wheel-speed
@@ -104,3 +106,7 @@ All of these run in CI on every push.
 - can-j1939 does not report the destination address to its subscribers, so
   the cross-check compares priority, PGN, source and payload. Destinations are
   covered by unit tests.
+- Correction found in M2: the cross-check's step to make can-j1939 hear every
+  destination had no effect until M2 fixed it. On this capture that changed
+  nothing, because every addressed (PDU1) frame in it goes to the global
+  address, and the result above was re-run after the fix and is unchanged.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -60,6 +61,23 @@ std::optional<std::uint32_t> extract_bits(std::span<const std::uint8_t> data, st
 /// Decodes every known parameter of `pgn` from `data`.
 std::vector<SignalValue> decode_signals(std::uint32_t pgn, std::span<const std::uint8_t> data);
 
+/// Writes `length` bits of `raw` at `start_bit` (J1939 bit order) into `data`. Returns false,
+/// writing nothing, if the field does not fit.
+bool insert_bits(std::span<std::uint8_t> data, std::uint16_t start_bit, std::uint8_t length, std::uint32_t raw);
+
+/// A value to encode: a physical value for measured parameters (scaled and offset by the
+/// table), or the raw state for discrete ones.
+struct SignalInput {
+    std::uint32_t spn = 0;
+    double value = 0.0;
+};
+
+/// Builds an 8-byte payload for `pgn`: every byte starts as 0xFF ("not available"), then each
+/// known SPN of that group in `inputs` is written. Measured values are rounded to the nearest
+/// step and clamped to the valid range, so the encoder never produces an error or
+/// not-available code by accident. SPNs not in the group are ignored.
+std::array<std::uint8_t, 8> encode_signals(std::uint32_t pgn, std::span<const SignalInput> inputs);
+
 /// One active diagnostic trouble code from DM1.
 struct Dtc {
     std::uint32_t spn = 0;  ///< 19 bits: which parameter is faulty
@@ -82,6 +100,10 @@ struct Dm1 {
 /// whole number of 4-byte codes (ignoring 0xFF padding). The "no active codes" pattern
 /// (SPN 0, FMI 0) yields an empty list.
 std::optional<Dm1> decode_dm1(std::span<const std::uint8_t> data);
+
+/// Encodes DM1 (lamps then 4 bytes per code). With no codes it is the 8-byte "no active codes"
+/// pattern; with one code 8 bytes; with more, 2 + 4n bytes (sent with the transport protocol).
+std::vector<std::uint8_t> encode_dm1(const Dm1& dm);
 
 /// Time/Date (PGN 65254) as a calendar time.
 ///

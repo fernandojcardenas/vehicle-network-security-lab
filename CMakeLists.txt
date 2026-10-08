@@ -31,13 +31,30 @@ endif()
 
 add_library(vnsl
   src/can/frame.cpp
+  src/can/bit_timing.cpp
   src/j1939/transport.cpp
-  src/j1939/signals.cpp)
+  src/j1939/signals.cpp
+  src/sim/simulator.cpp
+  src/sim/j1939_node.cpp
+  src/sim/vehicle.cpp
+  src/sim/truck.cpp)
 target_include_directories(vnsl PUBLIC include)
 target_link_libraries(vnsl PRIVATE vnsl_warnings)
 
 add_executable(vn-decode apps/vn-decode/main.cpp)
 target_link_libraries(vn-decode PRIVATE vnsl vnsl_warnings)
+
+add_executable(vn-sim apps/vn-sim/main.cpp)
+target_link_libraries(vn-sim PRIVATE vnsl vnsl_warnings)
+
+# SocketCAN exists only on Linux; everything else builds anywhere (macOS included).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(vnsl PRIVATE src/can/socketcan.cpp)
+  add_executable(vn-record apps/vn-record/main.cpp)
+  target_link_libraries(vn-record PRIVATE vnsl vnsl_warnings)
+  add_executable(vn-replay apps/vn-replay/main.cpp)
+  target_link_libraries(vn-replay PRIVATE vnsl vnsl_warnings)
+endif()
 
 if(VNSL_BUILD_TESTS)
   FetchContent_Declare(googletest
@@ -52,7 +69,10 @@ if(VNSL_BUILD_TESTS)
     tests/id_test.cpp
     tests/transport_test.cpp
     tests/signals_test.cpp
-    tests/capture_test.cpp)
+    tests/capture_test.cpp
+    tests/bit_timing_test.cpp
+    tests/simulator_test.cpp
+    tests/j1939_node_test.cpp)
   target_link_libraries(vnsl_tests PRIVATE vnsl GTest::gtest_main)
   target_compile_definitions(vnsl_tests PRIVATE VNSL_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata")
   include(GoogleTest)
@@ -60,7 +80,7 @@ if(VNSL_BUILD_TESTS)
 endif()
 
 if(VNSL_BUILD_FUZZERS)
-  foreach(target fuzz_log_line fuzz_transport fuzz_signals)
+  foreach(target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck)
     add_executable(${target} fuzz/${target}.cpp)
     target_compile_options(${target} PRIVATE -fsanitize=fuzzer)
     target_link_options(${target} PRIVATE -fsanitize=fuzzer)

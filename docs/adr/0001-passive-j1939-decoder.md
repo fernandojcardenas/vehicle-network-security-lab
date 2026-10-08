@@ -27,10 +27,13 @@ Write the decoder in C++20 as a passive listener, from public sources.
 - **Public parameter definitions only**: the FMS-Standard interface
   description and public J1939-71 summaries. The table is small (92 SPNs) and
   is checked against real traffic where possible, rather than copied in bulk.
-- **can-j1939 as an independent reference in CI**, with its acceptance filter
-  opened so it hears every destination. Agreement with an implementation
-  written by someone else is stronger evidence than tests written by the same
-  author as the decoder.
+- **can-j1939 as an independent reference in CI**, made to listen to every
+  destination. (Correction, M2: the first version of that step had no effect,
+  because can-j1939 keeps its own reference to the acceptance check. It made no
+  difference on the real capture, where every addressed frame goes to the
+  global address. Fixed when the simulator produced point-to-point traffic.)
+  Agreement with an implementation written by someone else is stronger
+  evidence than tests written by the same author as the decoder.
 - **Timeouts from frame timestamps**, not the wall clock, so replaying a log
   is deterministic at any speed.
 

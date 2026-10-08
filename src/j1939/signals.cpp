@@ -1,6 +1,7 @@
 #include "vnsl/j1939/signals.hpp"
 
 #include <array>
+#include <cmath>
 
 namespace vnsl::j1939 {
 namespace {
@@ -203,6 +204,73 @@ std::vector<SignalValue> decode_signals(std::uint32_t pgn, std::span<const std::
         }
         out.push_back(v);
     }
+    return out;
+}
+
+bool insert_bits(std::span<std::uint8_t> data, std::uint16_t start_bit, std::uint8_t length, std::uint32_t raw) {
+    if (length == 0 || length > 32) return false;
+    const std::size_t end_bit = static_cast<std::size_t>(start_bit) + length;
+    if (end_bit > data.size() * 8) return false;
+    for (std::size_t i = 0; i < length; ++i) {
+        const std::size_t bit = start_bit + i;
+        const auto mask = static_cast<std::uint8_t>(1U << (bit % 8));
+        if (((raw >> i) & 1U) != 0) {
+            data[bit / 8] = static_cast<std::uint8_t>(data[bit / 8] | mask);
+        } else {
+            data[bit / 8] = static_cast<std::uint8_t>(data[bit / 8] & ~mask);
+        }
+    }
+    return true;
+}
+
+namespace {
+
+/// Largest raw value classify() calls Valid for a field of this width.
+std::uint32_t max_valid_raw(std::uint8_t length, bool discrete) {
+    const std::uint64_t all = (std::uint64_t{1} << length) - 1;
+    if (discrete || length < 8 || length % 8 != 0) {
+        if (length >= 2) return static_cast<std::uint32_t>(all - 2);
+        return 0;
+    }
+    const unsigned shift = length - 8U;
+    return static_cast<std::uint32_t>((std::uint64_t{0xFA} << shift) | ((std::uint64_t{1} << shift) - 1));
+}
+
+}  // namespace
+
+std::array<std::uint8_t, 8> encode_signals(std::uint32_t pgn, std::span<const SignalInput> inputs) {
+    std::array<std::uint8_t, 8> out{};
+    out.fill(0xFF);
+    for (const auto& in : inputs) {
+        for (const auto& def : kTable) {
+            if (def.pgn != pgn || def.spn != in.spn) continue;
+            const std::uint32_t max = max_valid_raw(def.length, def.discrete());
+            double raw = def.discrete() ? in.value : (in.value - def.offset) / def.scale;
+            raw = std::nearbyint(raw);
+            if (!(raw >= 0.0)) raw = 0.0;  // also catches NaN
+            if (raw > static_cast<double>(max)) raw = static_cast<double>(max);
+            insert_bits(out, def.start_bit, def.length, static_cast<std::uint32_t>(raw));
+        }
+    }
+    return out;
+}
+
+std::vector<std::uint8_t> encode_dm1(const Dm1& dm) {
+    std::vector<std::uint8_t> out;
+    out.push_back(static_cast<std::uint8_t>((dm.protect_lamp & 3) | ((dm.amber_warning_lamp & 3) << 2) |
+                                            ((dm.red_stop_lamp & 3) << 4) | ((dm.malfunction_lamp & 3) << 6)));
+    out.push_back(0xFF);  // flash states: not available
+    if (dm.dtcs.empty()) {
+        out.insert(out.end(), {0, 0, 0, 0, 0xFF, 0xFF});
+        return out;
+    }
+    for (const auto& d : dm.dtcs) {
+        out.push_back(static_cast<std::uint8_t>(d.spn & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((d.spn >> 8) & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((((d.spn >> 16) & 0x7) << 5) | (d.fmi & 0x1F)));
+        out.push_back(static_cast<std::uint8_t>((d.spn_conversion_method ? 0x80 : 0) | (d.occurrences & 0x7F)));
+    }
+    if (out.size() < 8) out.resize(8, 0xFF);
     return out;
 }
 

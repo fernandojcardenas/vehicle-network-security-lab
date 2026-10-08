@@ -1,0 +1,23 @@
+M2 fuzzing run, 2026-10-08 (clang 18, libFuzzer + ASan + UBSan, RelWithDebInfo)
+Same commands and seeds as the CI fuzz job. Last two lines of each run:
+
+== fuzz_log_line (60 s)
+#12997116	DONE   cov: 670 ft: 1859 corp: 256/29Kb lim: 4096 exec/s: 213067 rss: 536Mb
+Done 12997116 runs in 61 second(s)
+
+== fuzz_transport (60 s)
+#1729144	DONE   cov: 299 ft: 1994 corp: 449/225Kb lim: 4096 exec/s: 28346 rss: 605Mb
+Done 1729144 runs in 61 second(s)
+
+== fuzz_signals (60 s)
+#210263	DONE   cov: 200 ft: 534 corp: 141/9466b lim: 1600 exec/s: 3446 rss: 419Mb
+Done 210263 runs in 61 second(s)
+
+== fuzz_truck (60 s)
+#5977	DONE   cov: 1846 ft: 5358 corp: 292/16Kb lim: 66 exec/s: 97 rss: 556Mb
+Done 5977 runs in 61 second(s)
+
+fuzz_truck is slow by design: each input runs about 2.3 simulated seconds of the whole truck
+(six ECUs and the vehicle model) around the injected frames.
+
+No crashes, leaks, timeouts or sanitizer reports in any run.
