@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.compiler }}, ASan + UBSan)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-rt-18-dev
+      - name: Configure
+        env:
+          CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVNSL_SANITIZE=ON -DVNSL_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Unit tests and real-capture tests
+        run: ctest --test-dir build --output-on-failure
+
+  crosscheck:
+    name: Real truck traffic (cross-check against can-j1939, physical consistency)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build vn-decode
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-decode
+      - name: Decode the capture
+        run: |
+          set -o pipefail
+          ./build/vn-decode testdata/turku-truck-2020-11-26-slice.csv > ours.jsonl
+          ./build/vn-decode --summary testdata/turku-truck-2020-11-26-slice.csv | tail -4
+      - name: Compare every message with the independent can-j1939 package
+        run: |
+          set -o pipefail
+          pip install can-j1939==2.0.12 python-can==4.6.1
+          python3 tools/crosscheck_j1939.py testdata/turku-truck-2020-11-26-slice.csv ours.jsonl | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check the truck's clock and message rates against facts the decoder cannot know
+        run: |
+          set -o pipefail
+          python3 tools/check_consistency.py ours.jsonl --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: candump conversion round-trips
+        run: |
+          ./build/vn-decode --candump testdata/turku-truck-2020-11-26-slice.csv > capture.log
+          ./build/vn-decode --format candump capture.log | cmp - ours.jsonl
+
+  fuzz:
+    name: Fuzz (libFuzzer, 3 targets, 60 s each)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-rt-18-dev
+      - name: Build fuzzers
+        env:
+          CXX: clang++
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVNSL_BUILD_TESTS=OFF -DVNSL_BUILD_FUZZERS=ON
+          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals
+      - name: Fuzz the candump and CSV line parsers, seeded with real rows
+        run: |
+          mkdir -p corpus-log && head -n 300 testdata/turku-truck-2020-11-26-slice.csv | split -l 1 - corpus-log/csv-
+          printf '(1606390200.265340) can0 0CFE6CE6#FFFFFFFFFFFFFFFF' > corpus-log/candump
+          ./build/fuzz_log_line -max_total_time=60 -max_len=4096 corpus-log
+      - name: Fuzz the transport-protocol reassembler with arbitrary frame sequences
+        run: |
+          mkdir -p corpus-tp
+          python3 tools/make_tp_seeds.py corpus-tp
+          ./build/fuzz_transport -max_total_time=60 -max_len=4096 corpus-tp
+      - name: Fuzz the signal, DM1, Time/Date and NAME decoders
+        run: |
+          mkdir -p corpus-sig
+          printf '\xd2\x1c\x09\x0b\x66\x23\xff\xff' > corpus-sig/td
+          ./build/fuzz_signals -max_total_time=60 -max_len=2048 corpus-sig
+
+  lint:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy
+      - name: Configure
+        env:
+          CXX: clang++
+        run: cmake -S . -B build -G Ninja -DVNSL_BUILD_TESTS=OFF
+      - name: clang-tidy
+        run: run-clang-tidy -p build -quiet -warnings-as-errors='*' 'src/|apps/'

@@ -1,0 +1,2 @@
+# The real capture keeps the original dataset's CRLF line endings.
+testdata/*.csv -text

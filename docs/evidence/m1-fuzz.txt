@@ -1,0 +1,16 @@
+M1 fuzzing run, 2026-10-08 (clang 18, libFuzzer + ASan + UBSan, RelWithDebInfo)
+Same commands and seeds as the CI fuzz job. Last two lines of each run:
+
+== fuzz_log_line (60 s)
+#10514966	DONE   cov: 670 ft: 1843 corp: 270/29Kb lim: 4096 exec/s: 172376 rss: 487Mb
+Done 10514966 runs in 61 second(s)
+
+== fuzz_transport (60 s)
+#1284049	DONE   cov: 300 ft: 1886 corp: 417/228Kb lim: 4096 exec/s: 21049 rss: 596Mb
+Done 1284049 runs in 61 second(s)
+
+== fuzz_signals (60 s)
+#217880	DONE   cov: 200 ft: 524 corp: 127/4225b lim: 1740 exec/s: 3571 rss: 417Mb
+Done 217880 runs in 61 second(s)
+
+No crashes, leaks, timeouts or sanitizer reports in any run.
