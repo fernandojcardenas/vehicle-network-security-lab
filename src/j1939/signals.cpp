@@ -150,6 +150,33 @@ std::string_view pgn_name(std::uint32_t pgn) {
     return {};
 }
 
+SignalClass signal_class(std::uint32_t spn) {
+    switch (spn) {
+        // Accumulators: distance, fuel used, engine hours and revolutions only ever increase.
+        case 917:   // high-resolution total vehicle distance
+        case 918:   // high-resolution trip distance
+        case 247:   // engine total hours of operation
+        case 249:   // engine total revolutions
+        case 250:   // engine total fuel used
+        case 182:   // engine trip fuel
+        case 5053:  // high-resolution engine trip fuel
+        case 5054:  // high-resolution engine total fuel used
+            return SignalClass::Accumulator;
+        // Slow / environmental / clock: drift with conditions or advance with wall time.
+        case 110: case 174: case 175: case 176: case 52:   // temperatures
+        case 170: case 171: case 172: case 79:             // cab / ambient / inlet / road temps
+        case 108:                                          // barometric pressure
+        case 96: case 98: case 111: case 80:               // fuel / oil / coolant / washer levels
+        case 158: case 167: case 168: case 114: case 115:  // voltages and currents
+        case 959: case 960: case 961: case 962: case 963: case 964: case 1601: case 1602:  // time/date
+        case 185:  // engine average fuel economy: a long-run average that drifts slowly
+        case 86:   // cruise control set speed: a driver-chosen setpoint, not a sensor reading
+            return SignalClass::Slow;
+        default:
+            return SignalClass::Operational;
+    }
+}
+
 Status classify(std::uint32_t raw, std::uint8_t length_bits, bool discrete) {
     if (length_bits == 0 || length_bits > 32) return Status::Missing;
     const std::uint32_t max = length_bits == 32 ? 0xFFFFFFFFU : ((1U << length_bits) - 1U);

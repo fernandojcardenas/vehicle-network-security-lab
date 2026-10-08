@@ -151,8 +151,39 @@ jobs:
           wait $CD || true
           python3 tools/compare_logs.py live.log replay.log --speed 4 | tee -a "$GITHUB_STEP_SUMMARY"
 
+  ids:
+    name: "Intrusion detection (simulated attacks: detection and false alarms)"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-sim vn-ids vn-attack
+      - name: Five minutes of simulated traffic
+        run: ./build/vn-sim --duration 300 --seed 3 --out sim.log
+      - name: Clean traffic raises only a few novelty alerts (none from an attack)
+        run: |
+          set -o pipefail
+          ./build/vn-ids sim.log --train-frac 0.4 2>&1 >/dev/null | tee ids.out | tee -a "$GITHUB_STEP_SUMMARY"
+          # Learned ranges yield a handful of novelty alerts when a later drive cycle exceeds the
+          # training window; assert the count stays small (a blow-up would mean a regression).
+          n=$(grep -oE "[0-9]+ alerts" ids.out | grep -oE "[0-9]+")
+          echo "clean alerts: $n"
+          test "$n" -lt 100
+      - name: Every attack must be detected with no false alarms outside its window
+        run: |
+          set -o pipefail
+          for atk in flood spoof replay jump hijack; do
+            ./build/vn-attack sim.log --attack "$atk" --start 200 --duration 20 --out "a_$atk.log" --labels "a_$atk.labels"
+            python3 tools/evaluate_ids.py ./build/vn-ids "a_$atk.log" "a_$atk.labels" --train-frac 0.4 --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
   fuzz:
-    name: Fuzz (libFuzzer, 4 targets, 60 s each)
+    name: Fuzz (libFuzzer, 5 targets, 60 s each)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -163,7 +194,7 @@ jobs:
           CXX: clang++
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVNSL_BUILD_TESTS=OFF -DVNSL_BUILD_FUZZERS=ON
-          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck
+          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids
       - name: Fuzz the candump and CSV line parsers, seeded with real rows
         run: |
           mkdir -p corpus-log && head -n 300 testdata/turku-truck-2020-11-26-slice.csv | split -l 1 - corpus-log/csv-
@@ -184,6 +215,11 @@ jobs:
           mkdir -p corpus-truck
           python3 tools/make_truck_seeds.py corpus-truck
           ./build/fuzz_truck -max_total_time=60 -max_len=2200 -rss_limit_mb=4096 corpus-truck
+      - name: Fuzz the intrusion detector (train then judge on arbitrary frames)
+        run: |
+          mkdir -p corpus-ids
+          printf '\x0a\x18\xfe\xf1\x00\x08\x01\x02\x03\x04\x05\x06\x07' > corpus-ids/seed
+          ./build/fuzz_ids -max_total_time=60 -max_len=4096 corpus-ids
 
   lint:
     name: clang-tidy

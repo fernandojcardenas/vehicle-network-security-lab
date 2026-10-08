@@ -66,3 +66,18 @@ sources:
 The paid SAE J1939 Digital Annex was not used, and the table is limited to
 common parameters. Positions are checked against real traffic where the
 capture allows it (see [j1939-decoder.md](j1939-decoder.md)).
+
+## Colorado State University heavy-vehicle J1939 data (M3)
+
+The intrusion detector (M3) is validated on real driving traffic from two
+trucks published by Jeremy Daily's group at Colorado State University:
+
+- 2015 Kenworth T660, a 7-minute drive (~137k frames).
+- 2014 Kenworth T270, a 4.2-hour drive (~9.86M frames).
+
+Source page: <https://www.engr.colostate.edu/~jdaily/J1939/candata.html>. The
+page states no licence, so these logs are **not** committed here. `tools/fetch_csu.py`
+downloads them on demand and verifies each zip against a known SHA-256; they
+are used only for local evaluation. The evidence files quote the measured
+detection and false-alarm numbers so the results can be read without the data.
+

@@ -12,8 +12,8 @@ No hardware is needed. Input comes from real truck traffic (a public research
 dataset) and from a simulated truck that also runs live on a Linux virtual CAN
 bus.
 
-**Status:** M1 (J1939 decoder) and M2 (virtual vehicle bus) done. See the
-[roadmap](docs/roadmap.md).
+**Status:** M1 (J1939 decoder), M2 (virtual vehicle bus) and M3 (attacks +
+intrusion detection) done. See the [roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -116,6 +116,58 @@ optimistic.
 
 Details: [docs/simulator.md](docs/simulator.md).
 
+## Attacks and a detector that catches them (M3)
+
+`vn-ids` is a passive intrusion detector. It learns one truck's normal
+behaviour from a training window of that truck's own traffic, then flags
+deviations in the rest. Every rule is explainable, and nothing is model-based
+beyond the learned ranges:
+
+- **Unknown source** — a frame from an address never seen in training.
+- **Unexpected group** — a known ECU sending a parameter group it never sent.
+- **Flood rate** — a message arriving far faster than its learned minimum gap.
+- **Value out of range / impossible jump** — an operational signal (speed,
+  rpm, torque, pressure) outside its learned envelope or changing faster than
+  ever observed.
+- **Transport anomaly** — the transport layer reporting a new failure
+  (sequence error, orphan packet, abort), which a healthy bus never does.
+- **Address-claim conflict** — an address claimed with a different NAME than
+  before: a node being impersonated.
+
+A signal is judged by its nature, which is what makes the false-alarm rate low
+on real trucks: accumulators (odometer, fuel used, engine hours) only ever
+grow, so a decrease is the anomaly; slow or environmental signals
+(temperatures, fuel level, the clock, a driver's cruise setpoint) are not
+range-checked at all. Without this, a naive range check raised 938 false
+alarms on a 7-minute real drive; with it, 10.
+
+`vn-attack` splices a labelled attack into any log (real or simulated), so the
+same evaluation runs on both. Five attacks are covered: a bus **flood**, a
+**spoofed** vehicle speed, a **replay** of earlier traffic, an impossible value
+**jump**, and an address **hijack**.
+
+On real truck traffic (2014 Kenworth T270, a 30-minute slice; the detector
+trained on the first 40%):
+
+| Attack | Detected by | 
+|---|---|
+| Flood | an unknown source address appearing |
+| Spoof (200 km/h) | value out of range and an impossible jump |
+| Replay | impossible jumps, out-of-range values and a doubled message rate |
+| Jump (250 km/h) | value out of range and an impossible jump |
+| Hijack | a source sending a group it never sent (an address-claim conflict on a truck that sends claims) |
+
+All five detected, with zero false alarms over 1280 s of held-out clean
+traffic from the same truck. On the full 4.2-hour T270 drive the only clean
+alerts are 5 genuine novel operational states over 2.5 hours. The real logs
+are fetched on demand (`tools/fetch_csu.py`, SHA-256 checked) and never stored
+here. CI runs the whole attack-and-detect cycle on deterministic simulated
+traffic every push. Evidence:
+[simulated](docs/evidence/m3-ids-simulated.md),
+[real trucks](docs/evidence/m3-ids-real-truck.md).
+
+Details: [docs/ids.md](docs/ids.md).
+
 ## How it's checked
 
 Unit tests are not enough for a decoder: they only check the decoder against
@@ -186,10 +238,10 @@ simulator and the decoder use the same parameter table, so a parameter at the
 wrong position would be encoded and decoded the same wrong way. Positions are
 checked against real traffic, not against the simulation.
 
-Also: four libFuzzer targets (log parsers, transport reassembler, signal
-decoders, and the simulated truck's active J1939 stack fed hostile frames) run
-under ASan and UBSan on every push, and clang-tidy runs with warnings as
-errors.
+Also: five libFuzzer targets (log parsers, transport reassembler, signal
+decoders, the simulated truck's active J1939 stack, and the intrusion detector
+trained and run on hostile frames) run under ASan and UBSan on every push, and
+clang-tidy runs with warnings as errors.
 
 ## Build
 
@@ -202,6 +254,15 @@ cmake --build build
 ctest --test-dir build
 ./build/vn-decode --summary testdata/turku-truck-2020-11-26-slice.csv
 ./build/vn-sim --duration 600 --seed 1 --conflict --summary --out sim.log
+./build/vn-ids sim.log --train-frac 0.4          # learn normal, report anomalies
+```
+
+Inject an attack and see it caught:
+
+```
+./build/vn-attack sim.log --attack spoof --start 200 --duration 20 --out attacked.log --labels a.labels
+./build/vn-ids attacked.log --train-frac 0.4
+python3 tools/evaluate_ids.py ./build/vn-ids attacked.log a.labels --train-frac 0.4
 ```
 
 Live on a Linux virtual CAN bus (needs root for the first three lines):
@@ -224,8 +285,9 @@ Options: `-DVNSL_SANITIZE=ON` (ASan + UBSan), `-DVNSL_BUILD_FUZZERS=ON`
 include/vnsl/can/      CAN frame, log parsers, bit timing (CRC-15, stuffing), SocketCAN (Linux)
 include/vnsl/j1939/    identifier, transport protocol, signals (SPN table, DM1, NAME, Time/Date, encoding)
 include/vnsl/sim/      bus simulator, active J1939 node, vehicle model, the simulated truck
+include/vnsl/ids/      learned baseline, intrusion detector, attack injector
 src/                   implementation
-apps/                  vn-decode, vn-sim, vn-record, vn-replay
+apps/                  vn-decode, vn-sim, vn-record, vn-replay, vn-ids, vn-attack
 tests/                 unit tests and real-capture tests
 fuzz/                  libFuzzer targets
 tools/                 cross-check and consistency scripts, fuzz seeds

@@ -50,6 +50,18 @@ std::span<const SpnDef> spn_table();
 /// Short name of a parameter group ("EEC1"), or an empty view if not known.
 std::string_view pgn_name(std::uint32_t pgn);
 
+/// How a signal behaves over time, which decides how an intrusion detector should judge it:
+/// a learned value range only means something for a bounded operational signal.
+enum class SignalClass : std::uint8_t {
+    Operational,  ///< bounded and driven by what the vehicle is doing (speed, rpm, torque, pressure): range and rate checks apply
+    Accumulator,  ///< only ever increases (odometer, total fuel, engine hours): a decrease is the anomaly
+    Slow,         ///< drifts with environment or is a clock (temperatures, fuel level, time of day): no range check
+};
+
+/// Classifies a parameter by its SPN. Measured operational signals are the default; the
+/// accumulators and slow/environmental signals are listed explicitly.
+SignalClass signal_class(std::uint32_t spn);
+
 /// Classifies a raw value of a parameter `length_bits` wide (see Status).
 Status classify(std::uint32_t raw, std::uint8_t length_bits, bool discrete);
 
