@@ -235,17 +235,37 @@ jobs:
       - name: Default-deny filtering, live on two virtual CAN buses
         run: |
           set -o pipefail
-          ./build/vn-sim --duration 20 --seed 9 --out expected.log
+          ip -details link show vcan0; ip -details link show vcan1
+          # Start capturing the protected bus, then bring up the gateway and confirm it is running
+          # before any traffic flows: if it cannot open its two sockets it must fail here, loudly,
+          # rather than silently forwarding nothing.
           candump -L vcan1 > out.log &
           CD=$!
-          ./build/vn-gateway live --in vcan0 --out vcan1 --policy deploy/gateway.policy --direction B>A --duration 25 &
+          ./build/vn-gateway live --in vcan0 --out vcan1 --policy deploy/gateway.policy --direction B>A --duration 30 2> gw.err &
           GW=$!
-          sleep 1
+          sleep 2
+          kill -0 "$GW" 2>/dev/null || { echo "gateway is not running after startup:"; cat gw.err; exit 1; }
+          # Stream the simulated truck onto the diagnostic-side bus for 20 s.
           ./build/vn-sim --iface vcan0 --duration 20 --seed 9 >/dev/null
           # An attacker on the diagnostic side tries to push a command onto the powertrain bus.
           cansend vcan0 0C0000F9#0102030405060708
           sleep 2
-          kill -TERM $CD $GW 2>/dev/null; wait $GW 2>/dev/null || true; wait $CD 2>/dev/null || true
+          # Stop the gateway first so it drains, then give candump a moment to flush before stopping it.
+          kill -TERM "$GW" 2>/dev/null; wait "$GW" 2>/dev/null || true
+          sleep 1
+          kill -TERM "$CD" 2>/dev/null; wait "$CD" 2>/dev/null || true
+          # Put the decisive facts in the run summary: what the gateway itself saw and forwarded,
+          # and how many frames actually reached the protected bus. These, with the check below,
+          # distinguish "gateway forwarded nothing" from "capture saw nothing" at a glance.
+          captured=$(grep -c . out.log || true)
+          {
+            echo "### Gateway live run (vcan0 -> vcan1, default-deny B>A)"
+            echo '```'
+            cat gw.err
+            echo "frames captured on the protected bus (vcan1): ${captured}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "=== first lines seen on vcan1 ==="; head -3 out.log || true
           python3 tools/check_gateway.py out.log deploy/gateway.policy | tee -a "$GITHUB_STEP_SUMMARY"
 
   fuzz:
