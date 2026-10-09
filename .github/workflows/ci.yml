@@ -182,8 +182,37 @@ jobs:
             python3 tools/evaluate_ids.py ./build/vn-ids "a_$atk.log" "a_$atk.labels" --train-frac 0.4 --markdown | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
+  secoc:
+    name: Message authentication (crypto vectors, protect/verify, attacks rejected)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-sim vn-secoc vn-attack vn-mac
+      - name: Cross-check SHA-256 and HMAC against Python hashlib
+        run: python3 tools/crosscheck_crypto.py ./build/vn-mac 3000 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Protect two safety PGNs on simulated traffic; genuine must all verify
+        run: |
+          set -o pipefail
+          ./build/vn-sim --duration 120 --seed 5 --out clean.log
+          ./build/vn-secoc protect clean.log --pgn 65265 --pgn 61441 --out prot.log
+          ./build/vn-secoc verify prot.log --pgn 65265 --pgn 61441 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: A spoof and a replay against the protected log must be rejected
+        run: |
+          set -o pipefail
+          ./build/vn-attack prot.log --attack spoof  --start 60 --duration 20 --out spoof.log
+          ./build/vn-attack prot.log --attack replay --start 60 --duration 20 --out replay.log
+          # verify exits nonzero when anything is rejected, so invert: the attack MUST be caught.
+          ! ./build/vn-secoc verify spoof.log  --pgn 65265 --pgn 61441 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          ! ./build/vn-secoc verify replay.log --pgn 65265 --pgn 61441 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
   fuzz:
-    name: Fuzz (libFuzzer, 5 targets, 60 s each)
+    name: Fuzz (libFuzzer, 6 targets, 60 s each)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -194,7 +223,7 @@ jobs:
           CXX: clang++
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVNSL_BUILD_TESTS=OFF -DVNSL_BUILD_FUZZERS=ON
-          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids
+          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids fuzz_secoc
       - name: Fuzz the candump and CSV line parsers, seeded with real rows
         run: |
           mkdir -p corpus-log && head -n 300 testdata/turku-truck-2020-11-26-slice.csv | split -l 1 - corpus-log/csv-
@@ -220,6 +249,11 @@ jobs:
           mkdir -p corpus-ids
           printf '\x0a\x18\xfe\xf1\x00\x08\x01\x02\x03\x04\x05\x06\x07' > corpus-ids/seed
           ./build/fuzz_ids -max_total_time=60 -max_len=4096 corpus-ids
+      - name: Fuzz the SecOC verifier (must never accept a guessed tag)
+        run: |
+          mkdir -p corpus-secoc
+          printf '\x17\x08AAAAAAAA\x00\x11\x22\x33\x44' > corpus-secoc/seed
+          ./build/fuzz_secoc -max_total_time=60 -max_len=512 corpus-secoc
 
   lint:
     name: clang-tidy

@@ -12,8 +12,9 @@ No hardware is needed. Input comes from real truck traffic (a public research
 dataset) and from a simulated truck that also runs live on a Linux virtual CAN
 bus.
 
-**Status:** M1 (J1939 decoder), M2 (virtual vehicle bus) and M3 (attacks +
-intrusion detection) done. See the [roadmap](docs/roadmap.md).
+**Status:** M1 (J1939 decoder), M2 (virtual vehicle bus), M3 (attacks +
+intrusion detection) and M4 (message authentication) done. See the
+[roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -168,6 +169,38 @@ traffic every push. Evidence:
 
 Details: [docs/ids.md](docs/ids.md).
 
+## Authenticated messages (M4)
+
+Detection (M3) notices an attack after it happens; authentication prevents it.
+`vn-secoc` adds SecOC-style message authentication (AUTOSAR Secure Onboard
+Communication) to chosen J1939 PGNs. For each protected message it emits one
+companion CAN frame carrying a **freshness** value (a monotonic counter, for
+anti-replay) and a **truncated MAC** over the data ID, source, freshness and
+payload. A receiver recomputes the MAC with the shared key and checks the
+freshness; anything else is rejected.
+
+The MAC is HMAC-SHA256, truncated to 32 bits by default. SHA-256 and HMAC are
+implemented here with no external crypto dependency, and checked against the
+NIST and RFC 4231 test vectors and, every push, against Python's `hashlib` on
+thousands of random inputs. (AUTOSAR SecOC usually uses AES-128-CMAC; the MAC
+primitive is pluggable — see [ADR 0004](docs/adr/0004-secoc-message-authentication.md).)
+
+This is what closes the loop with M3. Run the same attacks against a protected
+log and they no longer get through:
+
+| Attack | Why it fails authentication |
+|---|---|
+| Spoof (false speed) | the injected frame carries no valid tag — rejected as unauthenticated |
+| Forge / alter a value | the MAC no longer matches — rejected as bad-mac |
+| Replay an earlier message | its freshness counter is stale — rejected as stale |
+| Wrong key | the MAC does not verify — rejected as bad-mac |
+
+On real truck traffic (2015 Kenworth T660, two PGNs authenticated), every
+genuine message verifies and a replay is rejected, at about 10% extra bus
+bandwidth — one extra frame per authenticated message. Evidence:
+[docs/evidence/m4-secoc.md](docs/evidence/m4-secoc.md). Details:
+[docs/secoc.md](docs/secoc.md).
+
 ## How it's checked
 
 Unit tests are not enough for a decoder: they only check the decoder against
@@ -238,9 +271,9 @@ simulator and the decoder use the same parameter table, so a parameter at the
 wrong position would be encoded and decoded the same wrong way. Positions are
 checked against real traffic, not against the simulation.
 
-Also: five libFuzzer targets (log parsers, transport reassembler, signal
-decoders, the simulated truck's active J1939 stack, and the intrusion detector
-trained and run on hostile frames) run under ASan and UBSan on every push, and
+Also: six libFuzzer targets (log parsers, transport reassembler, signal
+decoders, the simulated truck's active J1939 stack, the intrusion detector, and
+the SecOC verifier fed hostile tags) run under ASan and UBSan on every push, and
 clang-tidy runs with warnings as errors.
 
 ## Build
@@ -255,6 +288,8 @@ ctest --test-dir build
 ./build/vn-decode --summary testdata/turku-truck-2020-11-26-slice.csv
 ./build/vn-sim --duration 600 --seed 1 --conflict --summary --out sim.log
 ./build/vn-ids sim.log --train-frac 0.4          # learn normal, report anomalies
+./build/vn-secoc protect sim.log --pgn 65265 --out prot.log   # authenticate a PGN
+./build/vn-secoc verify prot.log --pgn 65265                  # check tags and freshness
 ```
 
 Inject an attack and see it caught:
@@ -286,8 +321,10 @@ include/vnsl/can/      CAN frame, log parsers, bit timing (CRC-15, stuffing), So
 include/vnsl/j1939/    identifier, transport protocol, signals (SPN table, DM1, NAME, Time/Date, encoding)
 include/vnsl/sim/      bus simulator, active J1939 node, vehicle model, the simulated truck
 include/vnsl/ids/      learned baseline, intrusion detector, attack injector
+include/vnsl/crypto/   SHA-256 and HMAC-SHA256
+include/vnsl/secoc/    SecOC-style protector and verifier
 src/                   implementation
-apps/                  vn-decode, vn-sim, vn-record, vn-replay, vn-ids, vn-attack
+apps/                  vn-decode, vn-sim, vn-record, vn-replay, vn-ids, vn-attack, vn-secoc
 tests/                 unit tests and real-capture tests
 fuzz/                  libFuzzer targets
 tools/                 cross-check and consistency scripts, fuzz seeds
