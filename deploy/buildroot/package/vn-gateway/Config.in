@@ -1,0 +1,5 @@
+config BR2_PACKAGE_VN_GATEWAY
+	bool "vn-gateway"
+	help
+	  The default-deny CAN gateway daemon from vehicle-network-security-lab.
+	  Forwards only policy-permitted J1939 frames between two CAN buses.

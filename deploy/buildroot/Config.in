@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_VNSL_PATH/package/vn-gateway/Config.in"

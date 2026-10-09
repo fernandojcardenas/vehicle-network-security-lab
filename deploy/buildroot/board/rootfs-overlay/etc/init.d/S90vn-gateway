@@ -1,0 +1,20 @@
+#!/bin/sh
+# Bring up the two virtual CAN buses and start the gateway between them, default-deny.
+case "$1" in
+  start)
+    ip link add dev vcan0 type vcan 2>/dev/null; ip link set up vcan0
+    ip link add dev vcan1 type vcan 2>/dev/null; ip link set up vcan1
+    nft -f /etc/nftables.conf
+    # Two unidirectional forwarders enforce the one policy each way between the buses.
+    /usr/bin/vn-gateway live --in vcan0 --out vcan1 --policy /etc/vn-gateway/gateway.policy --direction 'B>A' &
+    echo $! > /var/run/vn-gateway-ba.pid
+    /usr/bin/vn-gateway live --in vcan1 --out vcan0 --policy /etc/vn-gateway/gateway.policy --direction 'A>B' &
+    echo $! > /var/run/vn-gateway-ab.pid
+    ;;
+  stop)
+    for f in /var/run/vn-gateway-ba.pid /var/run/vn-gateway-ab.pid; do
+      [ -f "$f" ] && kill "$(cat "$f")"
+    done
+    ;;
+  *) echo "usage: $0 start|stop" ; exit 1 ;;
+esac

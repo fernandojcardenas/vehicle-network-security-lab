@@ -1,4 +1,9 @@
-build*/
+# CMake out-of-source build dirs (anchored to the repo root so it does not also
+# swallow deploy/buildroot, the appliance external tree, which IS source).
+/build*/
+# Buildroot's generated output, should the offline image build run inside the tree.
+deploy/buildroot/output/
+deploy/buildroot/dl/
 .cache/
 compile_commands.json
 corpus*/
