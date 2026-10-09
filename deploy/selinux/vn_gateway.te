@@ -1,24 +1,29 @@
-# SELinux type-enforcement policy confining the CAN gateway. The daemon may use CAN (PF_CAN)
-# sockets and talk to the kernel's CAN layer, and nothing else: no filesystem writes beyond its
-# own runtime, no raw IP sockets, no execution of other programs. If the gateway is ever
-# compromised through a malformed frame, SELinux still bounds what it can do.
-# Compiled in CI with `checkmodule -M -m -o vn_gateway.mod vn_gateway.te` + `semodule_package`.
+# SELinux type-enforcement module confining the CAN gateway daemon. Written in the loadable
+# module policy language (not the reference-policy m4 macros), so `checkmodule` compiles it
+# standalone in CI. The daemon runs in its own domain and may use CAN (PF_CAN) sockets and
+# nothing else: no filesystem writes beyond what the base policy grants its own runtime, no
+# raw IP sockets, no execution of other programs. If a malformed frame ever compromised the
+# gateway, SELinux still bounds what it can do.
+#
+# Build:   checkmodule -M -m -o vn_gateway.mod vn_gateway.te
+#          semodule_package -o vn_gateway.pp -m vn_gateway.mod
+#          semodule -i vn_gateway.pp      # install on the appliance
+#
+# The require block names symbols the base policy provides (the kernel defines the CAN socket
+# classes); this module adds only the gateway's own types and the one capability it needs.
 
-policy_module(vn_gateway, 1.0.0)
+module vn_gateway 1.0;
 
 require {
-    type unconfined_t;
-    class can_socket { create bind read write };
+    role system_r;
+    class can_socket { create bind connect read write setopt getopt };
 }
 
+# The gateway's own domain and the label on its executable.
 type vn_gateway_t;
 type vn_gateway_exec_t;
+role system_r types vn_gateway_t;
 
-# The daemon runs in its own domain, entered from its executable.
-init_daemon_domain(vn_gateway_t, vn_gateway_exec_t)
-
-# It may create and use CAN sockets. (PF_CAN is represented by the can_socket security class.)
-allow vn_gateway_t self:can_socket { create bind read write };
-
-# Deny-by-omission: no file write, no IP socket, no exec permissions are granted, so the base
-# policy's default of deny applies to everything not listed above.
+# The one privilege granted: create and use CAN sockets. Everything else is denied by omission
+# (no file-write, IP-socket, or exec allow rule appears here).
+allow vn_gateway_t self:can_socket { create bind connect read write setopt getopt };
