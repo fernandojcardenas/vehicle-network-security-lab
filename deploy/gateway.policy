@@ -1,0 +1,18 @@
+# Gateway policy for the simulated truck: bus A is the "untrusted" diagnostic side, bus B is
+# the protected powertrain bus. Default-deny: only the rules below cross. A diagnostic tool on
+# A cannot reach the powertrain on B except where explicitly permitted.
+#
+# A>B: nothing from the diagnostic side is allowed onto the powertrain bus by default.
+#      (If a workshop tool needed to request the vehicle ID, you would add exactly that:)
+# A>B pgn=59904 sa=0xF9 rate=1        # a request, at most 1/s, from the known tool address
+
+# B>A: the powertrain may report outward, each group capped near its real rate so a fault or a
+#      compromised ECU on B cannot flood the diagnostic side.
+B>A pgn=61444 rate=60       # EEC1 engine (20 ms -> 50 Hz; cap a little above)
+B>A pgn=61443 rate=25       # EEC2
+B>A pgn=61442 rate=120      # ETC1 transmission (10 ms)
+B>A pgn=61441 rate=12       # EBC1 brakes (100 ms)
+B>A pgn=65265 rate=12       # CCVS1 vehicle speed
+B>A pgn=65132 rate=25       # TCO1 tachograph
+B>A pgn=65262 rate=2        # ET1 temperatures (1 s)
+B>A pgn=65269 rate=2        # AMB

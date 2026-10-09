@@ -1,0 +1,24 @@
+# SELinux type-enforcement policy confining the CAN gateway. The daemon may use CAN (PF_CAN)
+# sockets and talk to the kernel's CAN layer, and nothing else: no filesystem writes beyond its
+# own runtime, no raw IP sockets, no execution of other programs. If the gateway is ever
+# compromised through a malformed frame, SELinux still bounds what it can do.
+# Compiled in CI with `checkmodule -M -m -o vn_gateway.mod vn_gateway.te` + `semodule_package`.
+
+policy_module(vn_gateway, 1.0.0)
+
+require {
+    type unconfined_t;
+    class can_socket { create bind read write };
+}
+
+type vn_gateway_t;
+type vn_gateway_exec_t;
+
+# The daemon runs in its own domain, entered from its executable.
+init_daemon_domain(vn_gateway_t, vn_gateway_exec_t)
+
+# It may create and use CAN sockets. (PF_CAN is represented by the can_socket security class.)
+allow vn_gateway_t self:can_socket { create bind read write };
+
+# Deny-by-omission: no file write, no IP socket, no exec permissions are granted, so the base
+# policy's default of deny applies to everything not listed above.

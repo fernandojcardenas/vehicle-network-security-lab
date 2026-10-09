@@ -42,7 +42,9 @@ add_library(vnsl
   src/ids/detector.cpp
   src/ids/attack.cpp
   src/crypto/hmac_sha256.cpp
-  src/secoc/secoc.cpp)
+  src/secoc/secoc.cpp
+  src/gateway/policy.cpp
+  src/gateway/gateway.cpp)
 target_include_directories(vnsl PUBLIC include)
 target_link_libraries(vnsl PRIVATE vnsl_warnings)
 
@@ -60,6 +62,9 @@ target_link_libraries(vn-secoc PRIVATE vnsl vnsl_warnings)
 
 add_executable(vn-mac apps/vn-mac/main.cpp)
 target_link_libraries(vn-mac PRIVATE vnsl vnsl_warnings)
+
+add_executable(vn-gateway apps/vn-gateway/main.cpp)
+target_link_libraries(vn-gateway PRIVATE vnsl vnsl_warnings)
 
 add_executable(vn-attack apps/vn-attack/main.cpp)
 target_link_libraries(vn-attack PRIVATE vnsl vnsl_warnings)
@@ -92,7 +97,8 @@ if(VNSL_BUILD_TESTS)
     tests/j1939_node_test.cpp
     tests/ids_test.cpp
     tests/crypto_test.cpp
-    tests/secoc_test.cpp)
+    tests/secoc_test.cpp
+    tests/gateway_test.cpp)
   target_link_libraries(vnsl_tests PRIVATE vnsl GTest::gtest_main)
   target_compile_definitions(vnsl_tests PRIVATE VNSL_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata")
   include(GoogleTest)
@@ -100,7 +106,7 @@ if(VNSL_BUILD_TESTS)
 endif()
 
 if(VNSL_BUILD_FUZZERS)
-  foreach(target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids fuzz_secoc)
+  foreach(target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids fuzz_secoc fuzz_gateway)
     add_executable(${target} fuzz/${target}.cpp)
     target_compile_options(${target} PRIVATE -fsanitize=fuzzer)
     target_link_options(${target} PRIVATE -fsanitize=fuzzer)

@@ -13,8 +13,8 @@ dataset) and from a simulated truck that also runs live on a Linux virtual CAN
 bus.
 
 **Status:** M1 (J1939 decoder), M2 (virtual vehicle bus), M3 (attacks +
-intrusion detection) and M4 (message authentication) done. See the
-[roadmap](docs/roadmap.md).
+intrusion detection), M4 (message authentication) and M5 (hardened gateway)
+done. See the [roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -201,6 +201,34 @@ bandwidth — one extra frame per authenticated message. Evidence:
 [docs/evidence/m4-secoc.md](docs/evidence/m4-secoc.md). Details:
 [docs/secoc.md](docs/secoc.md).
 
+## A hardened gateway between two buses (M5)
+
+A real defence puts a gateway between an untrusted bus (a diagnostic port, a
+telematics unit) and the protected powertrain bus, and lets almost nothing
+cross. `vn-gateway` is that gateway: **default-deny**. A frame is forwarded
+only if a rule in a small text policy allows it, by direction, PGN and source,
+and even an allowed message can be rate-capped so a flood cannot pass.
+
+```
+   bus A (untrusted)            vn-gateway            bus B (powertrain)
+   diagnostic tool  -->  default-deny + rate limit  -->  engine, brakes, ...
+                         only policy-permitted frames cross
+```
+
+On the real Kenworth T660, with a policy that allows the eight powertrain
+report groups outward (each capped near its real rate) and nothing inward, the
+gateway forwards the permitted reports and drops everything else, and a flood
+of an allowed message is held to its cap. 1000 command frames injected from the
+diagnostic side that reach the powertrain bus: zero.
+
+The gateway is pure policy over the frames it sees, so it runs the same offline
+over a log and live between two Linux `vcan` interfaces; CI exercises the live
+path. It ships as a locked-down appliance (`deploy/`): an nftables default-deny
+host firewall (syntax-checked in CI), an SELinux module confining the daemon to
+CAN sockets (compiled in CI), and a Buildroot image that boots it under QEMU
+with SELinux enforcing (the image build is a documented offline step, too heavy
+for CI). Details: [docs/gateway.md](docs/gateway.md).
+
 ## How it's checked
 
 Unit tests are not enough for a decoder: they only check the decoder against
@@ -271,10 +299,10 @@ simulator and the decoder use the same parameter table, so a parameter at the
 wrong position would be encoded and decoded the same wrong way. Positions are
 checked against real traffic, not against the simulation.
 
-Also: six libFuzzer targets (log parsers, transport reassembler, signal
-decoders, the simulated truck's active J1939 stack, the intrusion detector, and
-the SecOC verifier fed hostile tags) run under ASan and UBSan on every push, and
-clang-tidy runs with warnings as errors.
+Also: seven libFuzzer targets (log parsers, transport reassembler, signal
+decoders, the simulated truck's active J1939 stack, the intrusion detector, the
+SecOC verifier, and the gateway policy parser) run under ASan and UBSan on every
+push, and clang-tidy runs with warnings as errors.
 
 ## Build
 
@@ -290,6 +318,7 @@ ctest --test-dir build
 ./build/vn-ids sim.log --train-frac 0.4          # learn normal, report anomalies
 ./build/vn-secoc protect sim.log --pgn 65265 --out prot.log   # authenticate a PGN
 ./build/vn-secoc verify prot.log --pgn 65265                  # check tags and freshness
+./build/vn-gateway offline sim.log --policy deploy/gateway.policy --direction B>A --out fwd.log
 ```
 
 Inject an attack and see it caught:
@@ -323,8 +352,10 @@ include/vnsl/sim/      bus simulator, active J1939 node, vehicle model, the simu
 include/vnsl/ids/      learned baseline, intrusion detector, attack injector
 include/vnsl/crypto/   SHA-256 and HMAC-SHA256
 include/vnsl/secoc/    SecOC-style protector and verifier
+include/vnsl/gateway/  default-deny forwarding policy and gateway
 src/                   implementation
-apps/                  vn-decode, vn-sim, vn-record, vn-replay, vn-ids, vn-attack, vn-secoc
+deploy/                gateway policy, nftables + SELinux, Buildroot appliance
+apps/                  vn-decode, vn-sim, vn-record, vn-replay, vn-ids, vn-attack, vn-secoc, vn-gateway
 tests/                 unit tests and real-capture tests
 fuzz/                  libFuzzer targets
 tools/                 cross-check and consistency scripts, fuzz seeds

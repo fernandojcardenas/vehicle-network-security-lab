@@ -211,8 +211,45 @@ jobs:
           ! ./build/vn-secoc verify spoof.log  --pgn 65265 --pgn 61441 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           ! ./build/vn-secoc verify replay.log --pgn 65265 --pgn 61441 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
+  gateway:
+    name: "Hardened gateway (default-deny filtering, live vcan, nftables + SELinux policy)"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install can-utils, nftables, SELinux policy tools, vcan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build can-utils nftables checkpolicy
+          sudo modprobe vcan || { sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe vcan; }
+          for d in vcan0 vcan1; do sudo ip link add dev $d type vcan; sudo ip link set up $d; done
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVNSL_BUILD_TESTS=OFF
+          cmake --build build --target vn-sim vn-gateway
+      - name: The nftables host ruleset is valid
+        run: sudo nft -c -f deploy/nftables.conf && echo "nftables ruleset OK" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The SELinux policy module compiles
+        run: |
+          checkmodule -M -m -o /tmp/vn_gateway.mod deploy/selinux/vn_gateway.te
+          echo "SELinux policy compiles" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Default-deny filtering, live on two virtual CAN buses
+        run: |
+          set -o pipefail
+          ./build/vn-sim --duration 20 --seed 9 --out expected.log
+          candump -L vcan1 > out.log &
+          CD=$!
+          ./build/vn-gateway live --in vcan0 --out vcan1 --policy deploy/gateway.policy --direction B>A --duration 25 &
+          GW=$!
+          sleep 1
+          ./build/vn-sim --iface vcan0 --duration 20 --seed 9 >/dev/null
+          # An attacker on the diagnostic side tries to push a command onto the powertrain bus.
+          cansend vcan0 0C0000F9#0102030405060708
+          sleep 2
+          kill -TERM $CD $GW 2>/dev/null; wait $GW 2>/dev/null || true; wait $CD 2>/dev/null || true
+          python3 tools/check_gateway.py out.log deploy/gateway.policy | tee -a "$GITHUB_STEP_SUMMARY"
+
   fuzz:
-    name: Fuzz (libFuzzer, 6 targets, 60 s each)
+    name: Fuzz (libFuzzer, 7 targets, 60 s each)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -223,7 +260,7 @@ jobs:
           CXX: clang++
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVNSL_BUILD_TESTS=OFF -DVNSL_BUILD_FUZZERS=ON
-          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids fuzz_secoc
+          cmake --build build --target fuzz_log_line fuzz_transport fuzz_signals fuzz_truck fuzz_ids fuzz_secoc fuzz_gateway
       - name: Fuzz the candump and CSV line parsers, seeded with real rows
         run: |
           mkdir -p corpus-log && head -n 300 testdata/turku-truck-2020-11-26-slice.csv | split -l 1 - corpus-log/csv-
@@ -254,6 +291,11 @@ jobs:
           mkdir -p corpus-secoc
           printf '\x17\x08AAAAAAAA\x00\x11\x22\x33\x44' > corpus-secoc/seed
           ./build/fuzz_secoc -max_total_time=60 -max_len=512 corpus-secoc
+      - name: Fuzz the gateway policy parser and forwarding decision
+        run: |
+          mkdir -p corpus-gw
+          printf 'B>A pgn=65265 rate=12\n' > corpus-gw/seed
+          ./build/fuzz_gateway -max_total_time=60 -max_len=512 corpus-gw
 
   lint:
     name: clang-tidy
