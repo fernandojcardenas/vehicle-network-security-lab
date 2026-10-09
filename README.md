@@ -12,9 +12,10 @@ No hardware is needed. Input comes from real truck traffic (a public research
 dataset) and from a simulated truck that also runs live on a Linux virtual CAN
 bus.
 
-**Status:** M1 (J1939 decoder), M2 (virtual vehicle bus), M3 (attacks +
-intrusion detection), M4 (message authentication) and M5 (hardened gateway)
-done. See the [roadmap](docs/roadmap.md).
+**Status:** all six milestones done — M1 (J1939 decoder), M2 (virtual vehicle
+bus), M3 (attacks + intrusion detection), M4 (message authentication), M5
+(hardened gateway) and M6 (STRIDE threat model). See the
+[roadmap](docs/roadmap.md).
 
 ## Why
 
@@ -228,6 +229,32 @@ host firewall (syntax-checked in CI), an SELinux module confining the daemon to
 CAN sockets (compiled in CI), and a Buildroot image that boots it under QEMU
 with SELinux enforcing (the image build is a documented offline step, too heavy
 for CI). Details: [docs/gateway.md](docs/gateway.md).
+
+## The whole picture: a threat model (M6)
+
+The milestones add up to a defence in depth, and the [threat
+model](docs/threat-model.md) sets them against a STRIDE analysis of a
+heavy-vehicle CAN network. For each category — spoofing, tampering, repudiation,
+information disclosure, denial of service, elevation of privilege — it names the
+J1939/CAN weakness, the milestone that addresses it, and the residual risk left
+over. It is deliberately honest about the gaps: SecOC authenticates without
+encrypting, the gateway is allowlist-only, and on a single physical bus some
+disclosure and denial of service are inherent to CAN.
+
+The model is backed by a demo CI runs, not prose alone. `scripts/demo.sh` plays
+one attacker — a compromised diagnostic-side unit — against all three active
+defences and asserts each one fires:
+
+```
+Threat 1  spoof a safety message        -> M3 detects it, M4 rejects it (no valid tag)
+Threat 2  replay an authenticated msg   -> M4 rejects it (stale freshness)
+Threat 3  inject a command + flood from -> M5 keeps it off the powertrain bus
+          the diagnostic side
+```
+
+The `demo` CI job runs this end to end on every push, so "detect, authenticate,
+contain" is exercised, not asserted on faith. Output:
+[docs/evidence/m6-demo.md](docs/evidence/m6-demo.md).
 
 ## How it's checked
 

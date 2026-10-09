@@ -12,7 +12,7 @@ dataset, and a virtual CAN bus on Linux.
 | M3 Attacks and detection | `vn-attack` injects five labelled attacks (flood, spoof, replay, jump, hijack); `vn-ids` is a passive detector that learns each truck's normal behaviour and flags deviations with explainable rules | Done ([notes](ids.md)): all five detected on real Kenworth truck traffic with zero false alarms over 1280 s held-out; validated on two CSU trucks fetched by script |
 | M4 Authenticated messages | SecOC-style authentication (`vn-secoc`): HMAC-SHA256 truncated tag + freshness counter in a companion frame; `vn-mac` + crypto cross-check against hashlib | Done ([notes](secoc.md)): genuine traffic verifies, M3's spoof/replay/forge all rejected, on real Kenworth traffic; ~7-10% bus overhead |
 | M5 Hardened gateway | `vn-gateway`: default-deny forwarding with per-rule rate limits between two buses; nftables + SELinux + a Buildroot/QEMU appliance in `deploy/` | Done ([notes](gateway.md)): live on vcan in CI, nftables/SELinux policy checked in CI, image build documented offline; blocks diagnostic-side commands and floods on real truck traffic |
-| M6 Threat model and polish | STRIDE threat model of the whole lab, a demo and a write-up | Planned |
+| M6 Threat model and polish | STRIDE threat model of the whole lab, an executable end-to-end demo and a write-up | Done ([threat model](threat-model.md)): STRIDE analysis mapped to M1–M5 with residual risk stated; `scripts/demo.sh` runs detect → authenticate → contain and asserts each layer, exercised by the `demo` CI job |
 
 Targets: built ahead of the original plan (October 2027 – February 2028), at
 about 8 hours a week alongside study.
