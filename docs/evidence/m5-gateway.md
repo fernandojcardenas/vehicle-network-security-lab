@@ -4,7 +4,7 @@
 
 Policy: deploy/gateway.policy (eight powertrain groups allowed B>A at their rates, nothing A>B).
 
-    vn-gateway offline t660.log --policy deploy/gateway.policy --direction B>A
+    vn-gateway offline t660.log --policy deploy/gateway.policy --direction 'B>A'
 
     vn-gateway: seen 137309, forwarded 58417, denied 78892 (no-rule 62432, rate 16460)
 

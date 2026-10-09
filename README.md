@@ -318,7 +318,7 @@ ctest --test-dir build
 ./build/vn-ids sim.log --train-frac 0.4          # learn normal, report anomalies
 ./build/vn-secoc protect sim.log --pgn 65265 --out prot.log   # authenticate a PGN
 ./build/vn-secoc verify prot.log --pgn 65265                  # check tags and freshness
-./build/vn-gateway offline sim.log --policy deploy/gateway.policy --direction B>A --out fwd.log
+./build/vn-gateway offline sim.log --policy deploy/gateway.policy --direction 'B>A' --out fwd.log
 ```
 
 Inject an attack and see it caught:

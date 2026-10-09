@@ -241,7 +241,7 @@ jobs:
           # rather than silently forwarding nothing.
           candump -L vcan1 > out.log &
           CD=$!
-          ./build/vn-gateway live --in vcan0 --out vcan1 --policy deploy/gateway.policy --direction B>A --duration 30 2> gw.err &
+          ./build/vn-gateway live --in vcan0 --out vcan1 --policy deploy/gateway.policy --direction 'B>A' --duration 30 2> gw.err &
           GW=$!
           sleep 2
           kill -0 "$GW" 2>/dev/null || { echo "gateway is not running after startup:"; cat gw.err; exit 1; }
