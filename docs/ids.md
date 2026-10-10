@@ -110,9 +110,10 @@ outside every window (false alarms).
   meant to be trained on a representative capture of the vehicle.
 - **No per-frame source authentication.** CAN carries no sender identity, so
   spoofing from a genuine address is caught by content and timing, not by
-  proof of origin. M4 adds authenticated messages.
-- **The detector is passive.** It reports; it does not block. A gateway that
-  acts on these alerts is M5.
+  proof of origin. M4 adds authenticated messages ([secoc.md](secoc.md)).
+- **The detector is passive.** It reports; it does not block. Blocking is M5's
+  job, and M5's gateway does not act on these alerts: it forwards by a fixed
+  default-deny policy ([gateway.md](gateway.md)).
 - **Simulated attacks are cleaner than real ones.** The simulated bus carries
   18 standard groups; a real truck adds proprietary traffic and noise, so the
   real-truck evaluation is the one that matters for the false-alarm rate.

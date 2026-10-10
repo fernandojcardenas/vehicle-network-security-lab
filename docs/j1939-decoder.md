@@ -100,9 +100,11 @@ All of these run in CI on every push.
   [simulator.md](simulator.md)), but not by real traffic.
 - The truck is parked. Engine speed, torque, vehicle speed, fuel rate and
   temperatures are "not available" or constant, so their positions and scales
-  are checked by unit tests only. The planned physical check (the wheel-speed
-  sensor against the tachograph, engine speed against transmission input
-  speed) needs a driving capture (M3).
+  are checked by unit tests only. The physical checks (the wheel-speed sensor
+  against the tachograph, engine speed against transmission input speed) run
+  on simulated traffic since M2 ([m2-physics](evidence/m2-physics.md)), not on a
+  real driving capture. M3's real driving captures are used for intrusion
+  detection, not for these checks.
 - can-j1939 does not report the destination address to its subscribers, so
   the cross-check compares priority, PGN, source and payload. Destinations are
   covered by unit tests.

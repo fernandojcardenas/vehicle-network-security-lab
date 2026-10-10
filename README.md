@@ -40,8 +40,8 @@ around it, in the same order an attacker or a defender would learn them.
   checked before use; payloads never exceed 1785 bytes; open transfers are
   capped; timeouts (750 ms for broadcast, 1250 ms for connections) drop stalled
   transfers. Every failure is counted by kind (timeouts, out-of-order packets,
-  impossible announcements, aborts, orphan packets), because M3's intrusion
-  detector will read those counters.
+  impossible announcements, aborts, orphan packets), and M3's intrusion
+  detector reads those counters.
 - **Signals:** 92 public parameters (SPNs) from 18 parameter groups: engine
   and transmission speeds and torques, vehicle speed from the wheels and from
   the tachograph, temperatures, fuel, distance, time/date and battery voltage,
@@ -112,9 +112,9 @@ higher-priority NAME and moved to 0x80.
 The simulated bus is quieter than the real one: 13.7 % load and 244 frames a
 second, against 47 % and 811 on the Turku truck, computed with the same bit
 timing. The real truck's gateway also republishes dozens of proprietary
-groups, which the simulator does not invent. So M3 will measure detection on
-real traffic too: results on the quieter simulated bus alone would be too
-optimistic.
+groups, which the simulator does not invent. That is why M3 measures detection
+on real truck traffic too: results on the quieter simulated bus alone would be
+too optimistic.
 
 Details: [docs/simulator.md](docs/simulator.md).
 
